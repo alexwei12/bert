@@ -25,7 +25,7 @@ import modeling
 import optimization
 import tokenization
 import tensorflow as tf
-import metrics
+# import metrics
 import numpy as np
 
 flags = tf.flags
@@ -725,11 +725,11 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
         accuracy = tf.metrics.accuracy(
             labels=label_ids, predictions=predictions, weights=is_real_example)
         # 这里的metrics时我们定义的一个python文件，在下面会介绍
-        conf_mat = metrics.get_metrics_ops(label_ids, predictions, num_labels)
+        # conf_mat = metrics.get_metrics_ops(label_ids, predictions, num_labels)
         loss = tf.metrics.mean(values=per_example_loss, weights=is_real_example)
         return {
             "eval_accuracy": accuracy,
-            "eval_cm": conf_mat,
+            # "eval_cm": conf_mat,
             "eval_loss": loss,
         }
 
@@ -983,10 +983,10 @@ def main(_):
 
 
       # 我们可以拿到混淆矩阵（现在时numpy的形式），调用metrics.py文件中的方法来得到precision，recall，f1值
-      pre, rec, f1 = metrics.get_metrics(result["eval_cm"], len(label_list))
-      tf.logging.info("eval_precision: {}".format(pre))
-      tf.logging.info("eval_recall: {}".format(rec))
-      tf.logging.info("eval_f1: {}".format(f1))
+      # pre, rec, f1 = metrics.get_metrics(result["eval_cm"], len(label_list))
+      # tf.logging.info("eval_precision: {}".format(pre))
+      # tf.logging.info("eval_recall: {}".format(rec))
+      # tf.logging.info("eval_f1: {}".format(f1))
       tf.logging.info("eval_accuracy: {}".format(result["eval_accuracy"]))
       tf.logging.info("eval_loss: {}".format(result["eval_loss"]))
       np.save("conf_mat.npy", result["eval_cm"])
