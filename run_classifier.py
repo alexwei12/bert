@@ -25,6 +25,8 @@ import modeling
 import optimization
 import tokenization
 import tensorflow as tf
+import metrics
+import numpy as np
 
 flags = tf.flags
 
@@ -123,6 +125,12 @@ flags.DEFINE_integer(
     "num_tpu_cores", 8,
     "Only used if `use_tpu` is True. Total number of TPU cores to use.")
 
+flags.DEFINE_bool(
+    "do_export", False,
+    "Whether to export the model.")
+flags.DEFINE_string(
+    "export_dir", None,
+    "The dir where the exported model will be written.")
 
 class InputExample(object):
   """A single training/test example for simple sequence classification."""
@@ -373,6 +381,37 @@ class ColaProcessor(DataProcessor):
           InputExample(guid=guid, text_a=text_a, text_b=None, label=label))
     return examples
 
+class DataGrandProcessor(DataProcessor):
+  """Processor for the News data set (GLUE version)."""
+
+  def __init__(self):
+    self.labels = ['NORMAL', 'Other', 'ADVERTISEMENT', 'POLITIC', 'SPAM', 'REACTION', 'PORN']
+
+  def get_train_examples(self, data_dir):
+    return self._create_examples(
+      self._read_tsv(os.path.join(data_dir, "train.csv")), "train")
+
+  def get_dev_examples(self, data_dir):
+    return self._create_examples(
+      self._read_tsv(os.path.join(data_dir, "dev.csv")), "dev")
+
+  def get_test_examples(self, data_dir):
+    return self._create_examples(
+      self._read_tsv(os.path.join(data_dir, "test_temp.txt")), "test")
+
+  def get_labels(self):
+    return self.labels
+
+  def _create_examples(self, lines, set_type):
+    """Creates examples for the training and dev sets."""
+    examples = []
+    for (i, line) in enumerate(lines):
+      guid = "%s-%s" % (set_type, i)
+      text_a = tokenization.convert_to_unicode(line[1])
+      label = tokenization.convert_to_unicode(line[0])
+      examples.append(
+        InputExample(guid=guid, text_a=text_a, text_b=None, label=label))
+    return examples
 
 def convert_single_example(ex_index, example, label_list, max_seq_length,
                            tokenizer):
@@ -685,9 +724,12 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
         predictions = tf.argmax(logits, axis=-1, output_type=tf.int32)
         accuracy = tf.metrics.accuracy(
             labels=label_ids, predictions=predictions, weights=is_real_example)
+        # 这里的metrics时我们定义的一个python文件，在下面会介绍
+        conf_mat = metrics.get_metrics_ops(label_ids, predictions, num_labels)
         loss = tf.metrics.mean(values=per_example_loss, weights=is_real_example)
         return {
             "eval_accuracy": accuracy,
+            "eval_cm": conf_mat,
             "eval_loss": loss,
         }
 
@@ -762,6 +804,19 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
   return input_fn
 
 
+def serving_input_fn():
+  label_ids = tf.placeholder(tf.int32, [None], name='label_ids')
+  input_ids = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='input_ids')
+  input_mask = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='input_mask')
+  segment_ids = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='segment_ids')
+  input_fn = tf.estimator.export.build_raw_serving_input_receiver_fn({
+        'label_ids': label_ids,
+        'input_ids': input_ids,
+        'input_mask': input_mask,
+        'segment_ids': segment_ids,
+  })()
+  return input_fn
+
 # This function is not used by this file but is still used by the Colab and
 # people who depend on it.
 def convert_examples_to_features(examples, label_list, max_seq_length,
@@ -788,12 +843,13 @@ def main(_):
       "mnli": MnliProcessor,
       "mrpc": MrpcProcessor,
       "xnli": XnliProcessor,
+      "dg": DataGrandProcessor,
   }
 
   tokenization.validate_case_matches_checkpoint(FLAGS.do_lower_case,
                                                 FLAGS.init_checkpoint)
 
-  if not FLAGS.do_train and not FLAGS.do_eval and not FLAGS.do_predict:
+  if not FLAGS.do_train and not FLAGS.do_eval and not FLAGS.do_predict and not FLAGS.do_export:
     raise ValueError(
         "At least one of `do_train`, `do_eval` or `do_predict' must be True.")
 
@@ -925,6 +981,16 @@ def main(_):
         tf.logging.info("  %s = %s", key, str(result[key]))
         writer.write("%s = %s\n" % (key, str(result[key])))
 
+
+      # 我们可以拿到混淆矩阵（现在时numpy的形式），调用metrics.py文件中的方法来得到precision，recall，f1值
+      pre, rec, f1 = metrics.get_metrics(result["eval_cm"], len(label_list))
+      tf.logging.info("eval_precision: {}".format(pre))
+      tf.logging.info("eval_recall: {}".format(rec))
+      tf.logging.info("eval_f1: {}".format(f1))
+      tf.logging.info("eval_accuracy: {}".format(result["eval_accuracy"]))
+      tf.logging.info("eval_loss: {}".format(result["eval_loss"]))
+      np.save("conf_mat.npy", result["eval_cm"])
+
   if FLAGS.do_predict:
     predict_examples = processor.get_test_examples(FLAGS.data_dir)
     num_actual_predict_examples = len(predict_examples)
@@ -971,6 +1037,9 @@ def main(_):
         num_written_lines += 1
     assert num_written_lines == num_actual_predict_examples
 
+    if FLAGS.do_export:
+      estimator._export_to_tpu = False
+      estimator.export_savedmodel(FLAGS.export_dir, serving_input_fn)
 
 if __name__ == "__main__":
   flags.mark_flag_as_required("data_dir")
