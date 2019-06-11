@@ -989,7 +989,7 @@ def main(_):
       # tf.logging.info("eval_f1: {}".format(f1))
       tf.logging.info("eval_accuracy: {}".format(result["eval_accuracy"]))
       tf.logging.info("eval_loss: {}".format(result["eval_loss"]))
-      np.save("conf_mat.npy", result["eval_cm"])
+      # np.save("conf_mat.npy", result["eval_cm"])
 
   if FLAGS.do_predict:
     predict_examples = processor.get_test_examples(FLAGS.data_dir)
